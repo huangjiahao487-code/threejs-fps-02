@@ -5,7 +5,7 @@
 // load-time failure.
 import * as THREE from 'three';
 import { PALETTE } from './palette.js';
-import { createWorld, SITES, findRoute, nearestWaypoint } from './world.js';
+import { createWorld, SITES, WAYPOINTS, findRoute, nearestWaypoint } from './world.js';
 import { createInput } from './input.js';
 import { createPlayer } from './player.js';
 import { createWeapon, WEAPONS } from './weapons.js';
@@ -48,7 +48,7 @@ document.getElementById('game').appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(PALETTE.canvas);
-scene.fog = new THREE.Fog(new THREE.Color(PALETTE.canvas), 30, 75);
+scene.fog = new THREE.Fog(new THREE.Color(PALETTE.surface), 30, 75);
 const camera = new THREE.PerspectiveCamera(74, window.innerWidth / window.innerHeight, 0.05, 160);
 scene.add(camera);
 
@@ -91,6 +91,38 @@ function spawnTracer(from, to) {
   t.line.visible = true;
   t.line.material.opacity = 0.9;
   t.life = 0.08;
+}
+
+// Impact particles: a fixed pool of small shards, no allocation while playing.
+// A wall hit throws grey dust, a bot hit throws amber sparks.
+const impactMats = {
+  wall: new THREE.MeshBasicMaterial({ color: 0x9aa3ad }),
+  flesh: new THREE.MeshBasicMaterial({ color: 0xf0a830 }),
+};
+const impactGeo = new THREE.BoxGeometry(0.07, 0.07, 0.07);
+const impacts = [];
+for (let i = 0; i < 48; i += 1) {
+  const mesh = new THREE.Mesh(impactGeo, impactMats.wall);
+  mesh.visible = false;
+  scene.add(mesh);
+  impacts.push({ mesh, life: 0, vx: 0, vy: 0, vz: 0 });
+}
+let impactAt = 0;
+function spawnImpact(point, kind) {
+  for (let n = 0; n < 6; n += 1) {
+    const p = impacts[impactAt];
+    impactAt = (impactAt + 1) % impacts.length;
+    p.mesh.position.copy(point);
+    p.mesh.material = impactMats[kind] || impactMats.wall;
+    p.mesh.visible = true;
+    p.mesh.scale.setScalar(1);
+    const a = Math.random() * Math.PI * 2;
+    const sp = 1.5 + Math.random() * 2.5;
+    p.vx = Math.cos(a) * sp;
+    p.vz = Math.sin(a) * sp;
+    p.vy = 1.5 + Math.random() * 3;
+    p.life = 0.3 + Math.random() * 0.15;
+  }
 }
 
 // Explosion flash: one sphere and one light, reused.
@@ -185,21 +217,35 @@ function fireHitscan(shooter, origin, dir, def) {
         }
       }
       spawnTracer(origin, endPoint);
+      spawnImpact(endPoint, 'flesh');
       return { hit: true, point: endPoint, bot, part };
     }
     endPoint = hit.point;
     spawnTracer(origin, endPoint);
+    spawnImpact(endPoint, 'wall');
     return { hit: true, point: endPoint, bot: null, part: null };
   }
   spawnTracer(origin, endPoint);
   return { hit: false, point: endPoint, bot: null, part: null };
 }
 
-function hurtPlayer(dmg, killerName = 'Vanta') {
+function hurtPlayer(dmg, killerName = 'Vanta', fromPos = null) {
   if (!playerRef.alive) return;
   const final = player.state.armor ? dmg * 0.6 : dmg;
   player.state.health -= final;
   hud.damageFlash();
+  // Damage direction: an arc around the crosshair points at the threat, and a
+  // small random camera kick sells the hit. Both are pure feedback.
+  if (fromPos) {
+    const dx = fromPos.x - player.mover.state.position.x;
+    const dz = fromPos.z - player.mover.state.position.z;
+    const worldAngle = Math.atan2(-dx, -dz);
+    let rel = worldAngle - player.state.yaw;
+    while (rel > Math.PI) rel -= Math.PI * 2;
+    while (rel < -Math.PI) rel += Math.PI * 2;
+    hud.damageFrom(rel);
+    player.recoil((Math.random() * 2 - 1) * 0.005, (Math.random() * 2 - 1) * 0.007);
+  }
   audio.hurt();
   hud.setHealth(player.state.health, player.state.armor);
   if (player.state.health <= 0) {
@@ -239,6 +285,7 @@ function spawnAll() {
   state.planting = false;
   state.shots.length = 0;
   bots.spawnRound();
+  hud.setAttackSite('split take — A and B');
   hud.setHealth(100, false);
   hud.setAmmo(weapon.state.mag, weapon.state.reserve, weapon.def().name);
   hud.setMoney(economy.state.money);
@@ -355,7 +402,7 @@ function onGrenadeBurst(kind, pos) {
       if (d > grenades.FRAG_RADIUS) return;
       const los = hasClearLine(tmpB.set(at.x, at.y + 1.2, at.z), pos);
       const dmg = (110 - (95 * d) / grenades.FRAG_RADIUS) * (los ? 1 : 0.5);
-      if (isPlayer) hurtPlayer(dmg, killerName);
+      if (isPlayer) hurtPlayer(dmg, killerName, pos);
       else if (bots.damage(bot, dmg, 'torso')) {
         hud.killfeed('You', bot.name, false, 'ember');
         economy.kill();
@@ -388,6 +435,7 @@ function botFireAdapter(bot, from, dir, def) {
   raycaster.far = def.range;
   const hits = raycaster.intersectObjects(shootTargets, false);
   adapterEnd.copy(from).addScaledVector(dir, def.range);
+  let wallHit = false;
   for (const hit of hits) {
     const hitBot = hit.object.userData.bot;
     if (hitBot) {
@@ -403,9 +451,11 @@ function botFireAdapter(bot, from, dir, def) {
         if (hitBot.planting) { hitBot.planting = false; bomb.cancelPlant(); }
       }
       spawnTracer(from, hit.point);
+      spawnImpact(hit.point, 'flesh');
       return;
     }
     adapterEnd.copy(hit.point);
+    wallHit = true;
     break;
   }
   // Did the ray reach the player? Test the player as a capsule: distance from the ray
@@ -422,12 +472,13 @@ function botFireAdapter(bot, from, dir, def) {
       const miss = closest.distanceTo(tmpA);
       if (miss < 0.55 && hasClearLine(from, tmpA)) {
         const head = Math.abs(closest.y - (player.mover.state.position.y + 1.55)) < 0.2;
-        hurtPlayer(def.damage * (head ? def.headMult : 1), bot.name);
+        hurtPlayer(def.damage * (head ? def.headMult : 1), bot.name, bot.mover.state.position);
         spawnTracer(from, closest);
         return;
       }
     }
   }
+  if (wallHit) spawnImpact(adapterEnd, 'wall');
   spawnTracer(from, adapterEnd);
 }
 
@@ -652,6 +703,18 @@ function step(dt) {
       if (t.life <= 0) t.line.visible = false;
     }
   }
+  for (const p of impacts) {
+    if (p.life > 0) {
+      p.life -= dt;
+      p.vy -= 9 * dt;
+      p.mesh.position.x += p.vx * dt;
+      p.mesh.position.y += p.vy * dt;
+      p.mesh.position.z += p.vz * dt;
+      if (p.mesh.position.y < 0.04) { p.mesh.position.y = 0.04; p.vy = 0; }
+      p.mesh.scale.setScalar(Math.max(0.01, p.life / 0.4));
+      if (p.life <= 0) p.mesh.visible = false;
+    }
+  }
   if (boomLife > 0) {
     boomLife -= dt;
     const k = 1 - Math.max(0, boomLife) / 0.6;
@@ -665,6 +728,8 @@ function step(dt) {
   hud.setTimer(rs.timer, rs.phase);
   hud.setScore(rs.score.ember, rs.score.vanta, rs.round);
   hud.setAmmo(weapon.state.mag, weapon.state.reserve, weapon.def().name);
+  hud.setReloading(weapon.state.reloadLeft > 0);
+  hud.setTeam(bots.bots);
   hud.setCrosshairSpread(4 + weapon.spread(player.groundSpeed(), state.ads) * 900);
   syncCamera();
 }
@@ -714,14 +779,36 @@ function orchestrateBomb(dt) {
       }
     }
   }
-  // Planted: defenders converge; the closest defuses.
+  // Planted: the round flips from attack to defence. Ember falls back to the
+  // planted site and holds it in a crossfire; Vanta retakes as a group — the
+  // closest defuses, the rest hold the site's connector instead of walking at
+  // the bomb one by one.
   if (bomb.state.status === 'planted') {
+    const siteName = bomb.state.site === 'B' ? 'bSite' : 'aSite';
+    const site = SITES[bomb.state.site];
+    const connectorName = siteName === 'aSite' ? 'aConn' : 'bConn';
+    const connector = WAYPOINTS[connectorName];
+    for (const bot of bots.bots) {
+      if (bot.team !== 'ember' || !bot.alive || bot.target || bot.planting || bot.defusing) continue;
+      if (bot.state === 'route' && bot.routeTarget === 'defend') continue;
+      const p = bot.mover.state.position;
+      if (Math.hypot(p.x - site.x, p.z - site.z) < 4) continue;
+      bot.route = findRoute(nearestWaypoint(p.x, p.z), siteName);
+      bot.routeIndex = 0;
+      bot.routeTarget = 'defend';
+      bot.state = 'route';
+    }
     let defuser = null;
     let bestD = Infinity;
     for (const bot of bots.bots) {
       if (bot.team !== 'vanta' || !bot.alive) continue;
       const d = bot.mover.state.position.distanceTo(bomb.state.position);
       if (d < bestD) { bestD = d; defuser = bot; }
+    }
+    // A bot that is no longer the closest must not keep standing still as if
+    // it were defusing.
+    for (const bot of bots.bots) {
+      if (bot.team === 'vanta' && bot !== defuser) bot.defusing = false;
     }
     if (defuser) {
       if (bestD < 2.2 && hasClearLine(tmpA.set(defuser.mover.state.position.x, defuser.mover.state.position.y + 1.5, defuser.mover.state.position.z), bomb.state.position)) {
@@ -734,12 +821,26 @@ function orchestrateBomb(dt) {
         defuser.defusing = false;
         if (defuser.state !== 'route' || defuser.routeTarget !== 'defuse') {
           defuser.routeTarget = 'defuse';
-          defuser.route = [bomb.state.position];
+          const p = defuser.mover.state.position;
+          // Walk the waypoint graph to the site first; only the last few metres
+          // are a straight line across the open pad.
+          const dSite = Math.hypot(p.x - site.x, p.z - site.z);
+          defuser.route = dSite > 4 ? findRoute(nearestWaypoint(p.x, p.z), siteName) : [bomb.state.position];
           defuser.routeIndex = 0;
           defuser.state = 'route';
         }
       }
       if (defuser.defusing) hud.setBomb(`DEFUSING — ${Math.floor((bomb.state.defuseProgress / DEFUSE_TIME) * 100)}%`, bomb.state.defuseProgress / DEFUSE_TIME);
+      for (const bot of bots.bots) {
+        if (bot.team !== 'vanta' || !bot.alive || bot === defuser || bot.target || bot.defusing) continue;
+        if (bot.state === 'route' && bot.routeTarget === 'retake-cover') continue;
+        const p = bot.mover.state.position;
+        if (Math.hypot(p.x - connector.x, p.z - connector.z) < 3) continue;
+        bot.route = findRoute(nearestWaypoint(p.x, p.z), connectorName);
+        bot.routeIndex = 0;
+        bot.routeTarget = 'retake-cover';
+        bot.state = 'route';
+      }
     }
   }
 }

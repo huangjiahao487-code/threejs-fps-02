@@ -44,11 +44,18 @@ export function createHud() {
   const buyMoney = $('buy-money');
   const buyList = $('buy-list');
   const spectate = $('spectate');
+  const damageDir = $('damage-dir');
+  const ammoState = $('ammo-state');
+  const buyCallout = $('buy-callout');
+  const teamPanel = $('team-panel');
 
   let last = {};
   let hitTimer = 0;
   let vignetteTimer = 0;
+  let damageTimer = 0;
   let buyHandler = null;
+  let teamRows = null;
+  let lastTeamKey = '';
 
   function setText(el, key, value) {
     if (last[key] === value) return;
@@ -118,6 +125,7 @@ export function createHud() {
       const s = Math.max(0, Math.ceil(seconds));
       setText(timerEl, 'timer', `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`);
       setText(phaseLabel, 'phase', phase === 'buy' ? 'BUY PHASE' : phase === 'live' ? 'LIVE' : phase === 'roundEnd' ? 'ROUND OVER' : phase === 'matchEnd' ? 'MATCH OVER' : '');
+      timerEl.classList.toggle('low', phase === 'live' && seconds <= 10);
     },
     setBomb(text, frac) {
       bombStatus.hidden = false;
@@ -138,6 +146,54 @@ export function createHud() {
       vignette.classList.add('on');
       clearTimeout(vignetteTimer);
       vignetteTimer = setTimeout(() => vignette.classList.remove('on'), 180);
+    },
+    // An arc around the crosshair that points at the threat: rotate(-angle)
+    // because a threat to the player's right has a negative relative angle
+    // under this game's yaw convention.
+    damageFrom(angleRad) {
+      damageDir.style.transform = `rotate(${-angleRad}rad)`;
+      damageDir.classList.add('on');
+      clearTimeout(damageTimer);
+      damageTimer = setTimeout(() => damageDir.classList.remove('on'), 700);
+    },
+    setReloading(on) {
+      setText(ammoState, 'reload', on ? 'RELOADING' : '');
+    },
+    setAttackSite(site) {
+      setText(buyCallout, 'callout', `Team call: ${site}`);
+    },
+    // Teammate status: one row per Ember bot, alive or struck through, plus
+    // the living Vanta count. Rows are built once; only changes touch the DOM.
+    setTeam(botList) {
+      if (!teamRows) {
+        teamRows = {};
+        for (const bot of botList) {
+          if (bot.team !== 'ember') continue;
+          const row = document.createElement('div');
+          row.className = 'team-row';
+          row.innerHTML = `<b>${bot.name.toUpperCase()}</b> <span>●</span>`;
+          teamPanel.appendChild(row);
+          teamRows[bot.name] = row;
+        }
+        const vanta = document.createElement('div');
+        vanta.id = 'team-vanta';
+        teamPanel.appendChild(vanta);
+        teamRows.vanta = vanta;
+      }
+      let key = '';
+      let vantaAlive = 0;
+      for (const bot of botList) {
+        if (bot.team === 'ember') key += bot.alive ? '1' : '0';
+        else if (bot.alive) vantaAlive += 1;
+      }
+      key += `v${vantaAlive}`;
+      if (key === lastTeamKey) return;
+      lastTeamKey = key;
+      for (const bot of botList) {
+        if (bot.team !== 'ember') continue;
+        teamRows[bot.name].classList.toggle('dead', !bot.alive);
+      }
+      teamRows.vanta.textContent = `VANTA — ${vantaAlive} ALIVE`;
     },
     flashBlind(ms) {
       flashOverlay.classList.add('on');

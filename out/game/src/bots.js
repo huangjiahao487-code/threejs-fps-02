@@ -44,10 +44,18 @@ export function createBots(scene, world, fireHitscan, audio) {
 
   function buildMesh(team) {
     const group = new THREE.Group();
-    const torso = new THREE.Mesh(torsoGeo, mats[team]);
+    // Torso and head get their own material instances per bot, so a hit flash
+    // lights up exactly the bot that was shot, not the whole team.
+    const torsoMat = mats[team].clone();
+    torsoMat.emissive = new THREE.Color(0xffffff);
+    torsoMat.emissiveIntensity = 0;
+    const headMat = mats.skin.clone();
+    headMat.emissive = new THREE.Color(0xffffff);
+    headMat.emissiveIntensity = 0;
+    const torso = new THREE.Mesh(torsoGeo, torsoMat);
     torso.position.y = 1.12;
     torso.userData.part = 'torso';
-    const head = new THREE.Mesh(headGeo, mats.skin);
+    const head = new THREE.Mesh(headGeo, headMat);
     head.position.y = 1.6;
     head.userData.part = 'head';
     const visor = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.08, 0.05), mats[team]);
@@ -66,7 +74,7 @@ export function createBots(scene, world, fireHitscan, audio) {
     gun.position.set(0.1, 1.05, -0.42);
     group.add(torso, head, visor, legL, legR, armL, armR, gun);
     group.traverse((m) => { if (m.isMesh) { m.castShadow = true; } });
-    return { group, torso, head, gun };
+    return { group, torso, head, gun, torsoMat, headMat };
   }
 
   function makeBot(team, name, weaponId) {
@@ -76,6 +84,7 @@ export function createBots(scene, world, fireHitscan, audio) {
     const bot = {
       team, name, weapon: WEAPONS[weaponId],
       mover, group: parts.group, torso: parts.torso, head: parts.head,
+      torsoMat: parts.torsoMat, headMat: parts.headMat, flash: 0,
       health: 100, alive: true,
       yaw: 0, pitch: 0, eye: 1.55,
       state: 'route', route: [], routeIndex: 0, holdUntil: 0, scanBase: 0,
@@ -106,6 +115,9 @@ export function createBots(scene, world, fireHitscan, audio) {
       bot.planting = false;
       bot.state = 'route';
       bot.routeIndex = 0;
+      bot.flash = 0;
+      bot.torsoMat.emissiveIntensity = 0;
+      bot.headMat.emissiveIntensity = 0;
     }
     // Ember split: two to A, two to B (the fifth Ember is the player). Vanta split:
     // two hold A, two hold B, one roams mid.
@@ -243,6 +255,13 @@ export function createBots(scene, world, fireHitscan, audio) {
       return;
     }
     const blinded = now < bot.blindUntil;
+    // Hit flash: a bot that was just shot glows white for a blink, then fades.
+    if (bot.flash > 0) {
+      bot.flash = Math.max(0, bot.flash - dt);
+      const k = bot.flash / 0.12;
+      bot.torsoMat.emissiveIntensity = k;
+      bot.headMat.emissiveIntensity = k;
+    }
     // Vision, staggered.
     if (now >= bot.visionAt) {
       bot.visionAt = now + 0.15 + Math.random() * 0.05;
@@ -355,6 +374,7 @@ export function createBots(scene, world, fireHitscan, audio) {
   function damage(bot, amount, part) {
     if (!bot.alive) return false;
     bot.health -= amount;
+    bot.flash = 0.12;
     if (bot.health > 0) return false;
     bot.alive = false;
     bot.target = null;

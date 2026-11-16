@@ -81,6 +81,50 @@ export function createWorld(scene) {
   const group = new THREE.Group();
   scene.add(group);
 
+  // Dusk sky: a gradient dome (zenith indigo down to an amber horizon band) and a
+  // low sun glow to the west, both generated on canvas — no textures, no network.
+  // The dome is BackSide and ignores fog, so the walls fade into it instead of
+  // into a flat background colour.
+  function gradientTexture(stops, w, h) {
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    const g = c.getContext('2d');
+    const grad = g.createLinearGradient(0, 0, 0, h);
+    for (const [at, color] of stops) grad.addColorStop(at, color);
+    g.fillStyle = grad;
+    g.fillRect(0, 0, w, h);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }
+  const skyTex = gradientTexture([
+    [0, PALETTE.canvas], [0.3, PALETTE.surface], [0.42, PALETTE.rust],
+    [0.5, PALETTE.accent], [0.56, PALETTE.rust], [0.75, PALETTE.surface],
+    [1, PALETTE.canvas],
+  ], 8, 512);
+  const skyDome = new THREE.Mesh(
+    new THREE.SphereGeometry(130, 24, 12),
+    new THREE.MeshBasicMaterial({ map: skyTex, side: THREE.BackSide, fog: false, depthWrite: false }),
+  );
+  scene.add(skyDome);
+  const sunCanvas = document.createElement('canvas');
+  sunCanvas.width = 128;
+  sunCanvas.height = 128;
+  const sunCtx = sunCanvas.getContext('2d');
+  const sunGrad = sunCtx.createRadialGradient(64, 64, 4, 64, 64, 64);
+  sunGrad.addColorStop(0, 'rgba(255, 214, 140, 1)');
+  sunGrad.addColorStop(0.3, 'rgba(240, 168, 48, 0.55)');
+  sunGrad.addColorStop(1, 'rgba(240, 168, 48, 0)');
+  sunCtx.fillStyle = sunGrad;
+  sunCtx.fillRect(0, 0, 128, 128);
+  const sunTex = new THREE.CanvasTexture(sunCanvas);
+  sunTex.colorSpace = THREE.SRGBColorSpace;
+  const sunGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: sunTex, transparent: true, depthWrite: false, fog: false }));
+  sunGlow.position.set(-105, 16, 5);
+  sunGlow.scale.setScalar(36);
+  scene.add(sunGlow);
+
   const materials = {};
   for (const name of Object.keys(PALETTE)) {
     materials[name] = new THREE.MeshStandardMaterial({
@@ -151,13 +195,43 @@ export function createWorld(scene) {
   box(2.4, 0.9, 1.2, -5, 0.45, 14, 'hairline');
   box(2.4, 0.9, 1.2, 5, 0.45, 14, 'hairline');
 
+  // Two freight rail pairs down the yard, flat on the ground: ballast beds and
+  // steel rails. Visual only (collide=false) — they never block a bot or a bullet.
+  for (const cx of [-6.1, 6.1]) {
+    box(2.6, 0.05, 38, cx, 0.025, 0, 'hairline', false);
+    box(0.16, 0.06, 38, cx - 0.8, 0.05, 0, 'container', false);
+    box(0.16, 0.06, 38, cx + 0.8, 0.05, 0, 'container', false);
+  }
+
   // Bomb sites: glowing amber pads with four corner posts each. The pads are visual
-  // only; the site itself is the SITES coordinate above.
-  for (const site of Object.values(SITES)) {
+  // only; the site itself is the SITES coordinate above. A floating letter above
+  // each pad names the site at a glance, from anywhere in the yard.
+  function letterTexture(letter) {
+    const c = document.createElement('canvas');
+    c.width = 256;
+    c.height = 256;
+    const g = c.getContext('2d');
+    g.font = '700 190px system-ui, sans-serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.lineWidth = 14;
+    g.strokeStyle = PALETTE.canvas;
+    g.strokeText(letter, 128, 138);
+    g.fillStyle = PALETTE.accent;
+    g.fillText(letter, 128, 138);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }
+  for (const [key, site] of Object.entries(SITES)) {
     const pad = new THREE.Mesh(new THREE.BoxGeometry(4.4, 0.08, 4.4), siteMat);
     pad.position.set(site.x, 0.04, site.z);
     pad.receiveShadow = true;
     group.add(pad);
+    const letter = new THREE.Sprite(new THREE.SpriteMaterial({ map: letterTexture(key), transparent: true, depthWrite: false, fog: false }));
+    letter.position.set(site.x, 5.4, site.z);
+    letter.scale.setScalar(4);
+    scene.add(letter);
     for (const [dx, dz] of [[-2, -2], [2, -2], [-2, 2], [2, 2]]) {
       const post = new THREE.Mesh(new THREE.BoxGeometry(0.18, 1.5, 0.18), materials.accent);
       post.position.set(site.x + dx, 0.75, site.z + dz);

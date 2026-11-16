@@ -64,7 +64,32 @@
   #score-ember { color: var(--ember); font-size: 20px; }
   #score-vanta { color: var(--vanta); font-size: 20px; }
   #timer { color: var(--ink); font-size: 20px; min-width: 52px; text-align: center; }
+  #timer.low { color: var(--danger); }
   #round-label { letter-spacing: .08em; }
+
+  #team-panel {
+    position: fixed; left: 24px; top: 66px;
+    display: grid; gap: 3px;
+    font-family: var(--font-readout); font-size: 12px; letter-spacing: .08em; color: var(--muted);
+  }
+  .team-head { color: var(--ember); font-weight: 600; }
+  .team-row b { color: var(--ember); font-weight: 600; }
+  .team-row span { color: var(--ember); }
+  .team-row.dead { opacity: .45; }
+  .team-row.dead b { color: var(--muted); text-decoration: line-through; }
+  .team-row.dead span { color: var(--muted); }
+  #team-vanta { color: var(--vanta); margin-top: 4px; }
+
+  #damage-dir {
+    position: fixed; left: 50%; top: 50%; width: 150px; height: 150px;
+    margin: -75px 0 0 -75px; opacity: 0; pointer-events: none;
+    transition: opacity 300ms linear;
+  }
+  #damage-dir.on { opacity: 1; }
+  #damage-dir i {
+    display: block; width: 100%; height: 100%;
+    border: 3px solid transparent; border-top-color: var(--danger); border-radius: 50%;
+  }
 
   #money {
     position: fixed; top: 18px; right: 24px;
@@ -111,6 +136,7 @@
   #ammo.empty #ammo-mag { color: var(--accent); }
   #ammo-reserve { font-size: 16px; color: var(--muted); }
   #ammo-weapon { font-size: 12px; letter-spacing: .1em; color: var(--muted); margin-top: 4px; }
+  #ammo-state { font-size: 12px; letter-spacing: .12em; color: var(--accent); min-height: 15px; margin-top: 4px; }
 
   #spectate {
     position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%);
@@ -174,6 +200,7 @@
   #buy-menu[hidden] { display: none; }
   #buy-menu h2 { margin: 0 0 4px; font-size: 20px; font-weight: 500; }
   #buy-menu .buy-sub { margin: 0 0 14px; font-size: 13px; color: var(--muted); }
+  #buy-callout { margin: 0 0 14px; font-size: 13px; color: var(--accent); }
   #buy-money { color: var(--accent); font-family: var(--font-readout); }
   #buy-list { display: grid; gap: 6px; }
   .buy-row {
@@ -203,6 +230,8 @@
 <div id="hud" aria-hidden="true">
   <div id="crosshair"><i></i><i></i><i></i><i></i></div>
   <div id="hitmarker"><i></i><i></i><i></i><i></i></div>
+  <div id="damage-dir"><i></i></div>
+  <div id="team-panel"><div class="team-head">EMBER</div></div>
   <div id="topbar">
     <span id="round-label">ROUND 1</span>
     <span><b id="score-ember">0</b> — <b id="score-vanta">0</b></span>
@@ -221,7 +250,7 @@
     <div id="health-bar"><div id="health-fill"></div></div>
     <div id="armor-tag" hidden>KEVLAR</div>
   </div>
-  <div id="ammo"><span id="ammo-mag">12</span><span id="ammo-reserve">/ 48</span><div id="ammo-weapon">P9 SIDEARM</div></div>
+  <div id="ammo"><span id="ammo-mag">12</span><span id="ammo-reserve">/ 48</span><div id="ammo-weapon">P9 SIDEARM</div><div id="ammo-state"></div></div>
   <div id="spectate" hidden></div>
   <div id="banner" hidden><div id="banner-title"></div><div id="banner-sub"></div></div>
   <div id="damage-vignette"></div>
@@ -231,6 +260,7 @@
 <div id="buy-menu" hidden>
   <h2>Buy — round <span id="buy-round">1</span></h2>
   <p class="buy-sub">Money: <span id="buy-money">$800</span> · Keys 1–7 buy · B closes · Click a row to buy or equip</p>
+  <p id="buy-callout"></p>
   <div id="buy-list"></div>
 </div>
 
