@@ -409,8 +409,10 @@ function botFireAdapter(bot, from, dir, def) {
     break;
   }
   // Did the ray reach the player? Test the player as a capsule: distance from the ray
-  // to the player's spine, and no wall in between.
-  if (playerRef.alive) {
+  // to the player's spine, and no wall in between. Teammates cannot hurt the player
+  // — same no-friendly-fire rule as the bot-vs-bot path above (the player is Ember,
+  // and the death feed assumes a Vanta killer).
+  if (playerRef.alive && bot.team !== 'ember') {
     tmpA.copy(player.mover.state.position);
     tmpA.y += 1.0;
     const toPlayer = tmpB.copy(tmpA).sub(from);
@@ -440,6 +442,8 @@ hud.onPlay(() => {
     spawnAll();
     hud.hideBanner();
     hud.hideOverlay();
+    hud.showBuy(rounds.state.phase === 'buy');
+    state.buyOpen = rounds.state.phase === 'buy';
     input.requestLock();
     return;
   }
